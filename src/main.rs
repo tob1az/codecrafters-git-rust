@@ -1,9 +1,10 @@
+use clap::{Parser, Subcommand};
+use flate2::read::ZlibDecoder;
 #[allow(unused_imports)]
 use std::env;
-use std::fs;
-use std::io::Result;
-use clap::{Parser, Subcommand};
-
+use std::io::{prelude::*, stdout, Error, ErrorKind, Result};
+use std::path::PathBuf;
+use std::{fs, io};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -17,7 +18,7 @@ enum Command {
     Init,
 }
 
-impl Command  {
+impl Command {
     fn run(&self) -> Result<()> {
         match self {
             Self::Init => {
@@ -30,7 +31,36 @@ impl Command  {
     }
 }
 
+struct Object {
+    content: Vec<u8>,
+}
 
+impl Object {
+    fn from_hash(hash: &str) -> Result<Self> {
+        const HASH_SIZE: usize = 40; // hex string of SHA1
+        if hash.len() != HASH_SIZE {
+            return Err(Error::from(ErrorKind::InvalidInput));
+        }
+        let (subdir, filename) = hash
+            .split_once('\0')
+            .ok_or_else(|| Error::from(ErrorKind::InvalidData))?;
+        let mut filepath = PathBuf::new();
+        filepath.push(".git");
+        filepath.push("objects");
+        filepath.push(subdir);
+        filepath.push(filename);
+        let file = fs::File::open(filename)?;
+        let decoded_file = ZlibDecoder::new(file);
+        // TODO: verify header
+        Ok(Self {
+            content: decoded_file
+                .bytes()
+                .skip_while(|b| b.is_ok() && b.as_ref().unwrap() != &0)
+                .skip(1)
+                .collect::<Result<Vec<_>>>()?,
+        })
+    }
+}
 
 fn main() -> Result<()> {
     let args = Args::parse();
