@@ -1,21 +1,30 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, Args};
 use flate2::read::ZlibDecoder;
 #[allow(unused_imports)]
 use std::env;
 use std::io::{prelude::*, stdout, Error, ErrorKind, Result};
 use std::path::PathBuf;
-use std::{fs, io};
+use std::fs;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-struct Args {
+struct CommandLine {
     #[command(subcommand)]
     command: Command,
 }
 
+
 #[derive(Subcommand, Debug)]
 enum Command {
     Init,
+    CatFile(CatFile),
+}
+
+#[derive(Args, Debug)]
+struct CatFile {
+    #[arg(short)]
+    pretty: bool,
+    hash: String,
 }
 
 impl Command {
@@ -26,6 +35,10 @@ impl Command {
                 fs::create_dir(".git/objects")?;
                 fs::create_dir(".git/refs")?;
                 fs::write(".git/HEAD", "ref: refs/heads/master\n")
+            }
+            Self::CatFile(ref command) => {
+                let object = Object::from_hash(&command.hash)?;
+                stdout().write_all(&object.content)
             }
         }
     }
@@ -42,14 +55,13 @@ impl Object {
             return Err(Error::from(ErrorKind::InvalidInput));
         }
         let (subdir, filename) = hash
-            .split_once('\0')
-            .ok_or_else(|| Error::from(ErrorKind::InvalidData))?;
+            .split_at(2);
         let mut filepath = PathBuf::new();
         filepath.push(".git");
         filepath.push("objects");
         filepath.push(subdir);
         filepath.push(filename);
-        let file = fs::File::open(filename)?;
+        let file = fs::File::open(filepath)?;
         let decoded_file = ZlibDecoder::new(file);
         // TODO: verify header
         Ok(Self {
@@ -63,7 +75,7 @@ impl Object {
 }
 
 fn main() -> Result<()> {
-    let args = Args::parse();
+    let args = CommandLine::parse();
     args.command.run()?;
     Ok(())
 }
