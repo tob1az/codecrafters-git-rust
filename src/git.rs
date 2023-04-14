@@ -10,16 +10,7 @@ pub struct Object {
 
 impl Object {
     pub fn from_hash(hash: &str) -> Result<Self> {
-        const HASH_SIZE: usize = 40; // hex string of SHA1
-        if hash.len() != HASH_SIZE {
-            return Err(Error::from(ErrorKind::InvalidInput));
-        }
-        let (subdir, filename) = hash.split_at(2);
-        let mut filepath = PathBuf::new();
-        filepath.push(".git");
-        filepath.push("objects");
-        filepath.push(subdir);
-        filepath.push(filename);
+        let filepath = object_path(hash)?;
         let file = fs::File::open(filepath)?;
         let decoded_file = ZlibDecoder::new(file);
         // TODO: verify header
@@ -53,16 +44,25 @@ pub fn blobify(filepath: &Path) -> Result<Hash> {
     let mut hasher = Sha1::new();
     hasher.update(&blob);
     let hash = hex::encode(hasher.finalize());
-    let (subdir, filename) = hash.split_at(2);
-    let mut filepath = PathBuf::new();
-    filepath.push(".git");
-    filepath.push("objects");
-    filepath.push(subdir);
-    fs::create_dir_all(filepath.clone())?;
-    filepath.push(filename);
+    let filepath = object_path(&hash)?;
+    fs::create_dir_all(filepath.parent().unwrap())?;
     let file = fs::File::create(filepath)?;
     let mut encoder = ZlibEncoder::new(file, Compression::best());
     encoder.write_all(&blob)?;
     encoder.finish()?;
     Ok(hash)
+}
+
+fn object_path(hash: &str) -> Result<PathBuf> {
+    const HASH_SIZE: usize = 40; // hex string of SHA1
+    if hash.len() != HASH_SIZE {
+        return Err(Error::from(ErrorKind::InvalidInput));
+    }
+    let (subdir, filename) = hash.split_at(2);
+    let mut filepath = PathBuf::new();
+    filepath.push(".git");
+    filepath.push("objects");
+    filepath.push(subdir);
+    filepath.push(filename);
+    Ok(filepath)
 }
