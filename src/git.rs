@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use flate2::{bufread::ZlibDecoder, write::ZlibEncoder, Compression};
 use sha1::{Digest, Sha1};
 use std::fs;
@@ -79,25 +81,25 @@ fn parse_tree(data: &[u8]) -> Result<ParsedObject> {
     let mut entries = vec![];
     let mut reader = BufReader::new(data);
     while !reader.fill_buf()?.is_empty() {
-        let mut mode = vec![];
-        reader.read_until(b' ', &mut mode)?;
-        let _ = mode.pop(); // remove separator
-        
-        // TODO: move to anyhow
-        let mode = String::from_utf8(mode)
-            .map_err(|_| Error::from(ErrorKind::InvalidData))?
+        let mode = read_field(&mut reader, b' ')?
             .parse::<u32>()
             .map_err(|_| Error::from(ErrorKind::InvalidData))?;
-        let mut name = vec![];
-        reader.read_until(0, &mut name)?;
-        let _ = name.pop(); // remove separator
-        let name = String::from_utf8(name).map_err(|_| Error::from(ErrorKind::InvalidData))?;
+        let name = read_field(&mut reader, 0)?;
         let mut hash = vec![0; 20];
         reader.read_exact(&mut hash)?;
         let hash = hex::encode(&hash).to_string();
         entries.push(TreeEntry { mode, name, hash });
     }
     Ok(ParsedObject::Tree(entries))
+}
+
+fn read_field<R: BufRead>(reader: &mut R, separator: u8) -> Result<String> {
+    let mut field = vec![];
+    reader.read_until(separator, &mut field)?;
+    let _ = field.pop(); // remove separator
+
+    // TODO: move to anyhow
+    Ok(String::from_utf8(field).map_err(|_| Error::from(ErrorKind::InvalidData))?)
 }
 
 pub type Hash = String;
