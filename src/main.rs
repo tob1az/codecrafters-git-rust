@@ -1,8 +1,8 @@
 mod git;
 
-use clap::{Parser, Subcommand, Args};
-use std::io::Result;
+use clap::{Args, Parser, Subcommand};
 use std::fs;
+use std::io::Result;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -12,12 +12,12 @@ struct CommandLine {
     command: Command,
 }
 
-
 #[derive(Subcommand, Debug)]
 enum Command {
     Init,
     CatFile(CatFile),
     HashObject(HashObject),
+    LsTree(LsTree),
 }
 
 #[derive(Args, Debug)]
@@ -32,6 +32,13 @@ struct HashObject {
     #[arg(short)]
     write: bool,
     path: PathBuf,
+}
+
+#[derive(Args, Debug)]
+struct LsTree {
+    #[arg(long)]
+    name_only: bool,
+    hash: String,
 }
 
 impl Command {
@@ -49,6 +56,9 @@ impl Command {
                 println!("{}", hash);
                 Ok(())
             }
+            Self::LsTree(ref command) => git::Object::from_hash(&command.hash)?
+                .parse()?
+                .print_tree_names(),
         }
     }
 }

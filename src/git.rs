@@ -4,14 +4,28 @@ use std::fs;
 use std::io::{prelude::*, stdout, BufReader, Error, ErrorKind, Result};
 use std::path::{Path, PathBuf};
 
-enum ParsedObject {
+pub enum ParsedObject {
     Blob(Vec<u8>),
     Commit,
     Tag,
     Tree(Vec<TreeEntry>),
 }
 
-struct TreeEntry {
+impl ParsedObject {
+    pub fn print_tree_names(&self) -> Result<()> {
+        match &self {
+            ParsedObject::Tree(ref tree) => {
+                for entry in tree {
+                    println!("{}", entry.name);
+                }
+                Ok(())
+            }
+            _ => Err(Error::from(ErrorKind::Unsupported)),
+        }
+    }
+}
+
+pub struct TreeEntry {
     mode: u32,
     name: String,
     hash: Hash,
@@ -33,8 +47,9 @@ impl Object {
             .iter()
             .position(|&b| b == 0)
             .ok_or_else(|| Error::from(ErrorKind::InvalidData))?;
-        let content = data.split_off(header_end_index);
-        let header = data;
+        let content = data.split_off(header_end_index + 1);
+        let mut header = data;
+        let _ = header.pop(); // remove the separator byte
 
         // TODO: verify header
         Ok(Self { header, content })
@@ -63,24 +78,26 @@ impl Object {
 fn parse_tree(data: &[u8]) -> Result<ParsedObject> {
     let mut entries = vec![];
     let mut reader = BufReader::new(data);
-    while reader.fill_buf()?.is_empty() {
+    while !reader.fill_buf()?.is_empty() {
         let mut mode = vec![];
         reader.read_until(b' ', &mut mode)?;
+        let _ = mode.pop(); // remove separator
+        
         // TODO: move to anyhow
         let mode = String::from_utf8(mode)
             .map_err(|_| Error::from(ErrorKind::InvalidData))?
             .parse::<u32>()
             .map_err(|_| Error::from(ErrorKind::InvalidData))?;
-        reader.consume(1); // skip the whitespace
         let mut name = vec![];
         reader.read_until(0, &mut name)?;
+        let _ = name.pop(); // remove separator
         let name = String::from_utf8(name).map_err(|_| Error::from(ErrorKind::InvalidData))?;
         let mut hash = vec![0; 20];
         reader.read_exact(&mut hash)?;
-        let hash = String::from_utf8(hash).map_err(|_| Error::from(ErrorKind::InvalidData))?;
+        let hash = hex::encode(&hash).to_string();
         entries.push(TreeEntry { mode, name, hash });
     }
-    todo!();
+    Ok(ParsedObject::Tree(entries))
 }
 
 pub type Hash = String;
