@@ -1,31 +1,86 @@
-use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
+use flate2::{bufread::ZlibDecoder, write::ZlibEncoder, Compression};
 use sha1::{Digest, Sha1};
 use std::fs;
-use std::io::{prelude::*, stdout, Error, ErrorKind, Result};
+use std::io::{prelude::*, stdout, BufReader, Error, ErrorKind, Result};
 use std::path::{Path, PathBuf};
 
+enum ParsedObject {
+    Blob(Vec<u8>),
+    Commit,
+    Tag,
+    Tree(Vec<TreeEntry>),
+}
+
+struct TreeEntry {
+    mode: u32,
+    name: String,
+    hash: Hash,
+}
+
 pub struct Object {
+    header: Vec<u8>,
     content: Vec<u8>,
 }
 
 impl Object {
     pub fn from_hash(hash: &str) -> Result<Self> {
         let filepath = object_path(hash)?;
-        let file = fs::File::open(filepath)?;
-        let decoded_file = ZlibDecoder::new(file);
+        let file = BufReader::new(fs::File::open(filepath)?);
+        let mut decoded_file = ZlibDecoder::new(file);
+        let mut data = vec![];
+        decoded_file.read_to_end(&mut data)?;
+        let header_end_index = data
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or_else(|| Error::from(ErrorKind::InvalidData))?;
+        let content = data.split_off(header_end_index);
+        let header = data;
+
         // TODO: verify header
-        Ok(Self {
-            content: decoded_file
-                .bytes()
-                .skip_while(|b| b.is_ok() && b.as_ref().unwrap() != &0)
-                .skip(1)
-                .collect::<Result<Vec<_>>>()?,
-        })
+        Ok(Self { header, content })
     }
 
     pub fn print(&self) -> Result<()> {
         stdout().write_all(&self.content)
     }
+
+    pub fn parse(&self) -> Result<ParsedObject> {
+        let kind = self
+            .header
+            .split(|&b| b == b' ')
+            .next()
+            .ok_or_else(|| Error::from(ErrorKind::InvalidData))?;
+        match kind {
+            b"blob" => Ok(ParsedObject::Blob(self.content.clone())),
+            b"commit" => Ok(ParsedObject::Commit),
+            b"tag" => Ok(ParsedObject::Tag),
+            b"tree" => Ok(parse_tree(&self.content)?),
+            _ => Err(Error::from(ErrorKind::InvalidData)),
+        }
+    }
+}
+
+fn parse_tree(data: &[u8]) -> Result<ParsedObject> {
+    let mut entries = vec![];
+    let mut reader = BufReader::new(data);
+    while reader.fill_buf()?.is_empty() {
+        let mut mode = vec![];
+        reader.read_until(b' ', &mut mode)?;
+        // TODO: move to anyhow
+        let mode = String::from_utf8(mode)
+            .map_err(|_| Error::from(ErrorKind::InvalidData))?
+            .parse::<u32>()
+            .map_err(|_| Error::from(ErrorKind::InvalidData))?;
+        reader.consume(1); // skip the whitespace
+        let mut name = vec![];
+        reader.read_until(0, &mut name)?;
+        let name = String::from_utf8(name).map_err(|_| Error::from(ErrorKind::InvalidData))?;
+        let mut hash = vec![0; 20];
+        reader.read_exact(&mut hash)?;
+        let hash = String::from_utf8(hash).map_err(|_| Error::from(ErrorKind::InvalidData))?;
+        entries.push(TreeEntry { mode, name, hash });
+    }
+    todo!();
 }
 
 pub type Hash = String;
