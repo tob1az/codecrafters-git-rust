@@ -75,6 +75,23 @@ impl Object {
             _ => Err(Error::from(ErrorKind::InvalidData)),
         }
     }
+    pub fn serialize(&self) -> Result<Hash> {
+        let mut hasher = Sha1::new();
+        let separator = [b'\0'; 1];
+        hasher.update(&self.header);
+        hasher.update(&separator);
+        hasher.update(&self.content);
+        let hash = hex::encode(hasher.finalize());
+        let filepath = object_path(&hash)?;
+        fs::create_dir_all(filepath.parent().unwrap())?;
+        let file = fs::File::create(filepath)?;
+        let mut encoder = ZlibEncoder::new(file, Compression::best());
+        encoder.write_all(&self.header)?;
+        encoder.write_all(&separator)?;
+        encoder.write_all(&self.content)?;
+        encoder.finish()?;
+        Ok(hash)
+    }
 }
 
 fn parse_tree(data: &[u8]) -> Result<ParsedObject> {
@@ -106,25 +123,13 @@ pub type Hash = String;
 
 pub fn blobify(filepath: &Path) -> Result<Hash> {
     let content_size = filepath.metadata()?.len() as usize;
-    const HEADER_APPROX_SIZE: usize = 20;
-    let mut blob = Vec::with_capacity(HEADER_APPROX_SIZE + content_size);
-    blob.write(b"blob ")?;
-    blob.write(content_size.to_string().as_bytes())?;
-    blob.write(&[0])?;
-    let header_size = blob.len();
-    blob.resize(header_size + content_size, 0);
-    fs::File::open(filepath)?.read_exact(&mut blob[header_size..])?;
-
-    let mut hasher = Sha1::new();
-    hasher.update(&blob);
-    let hash = hex::encode(hasher.finalize());
-    let filepath = object_path(&hash)?;
-    fs::create_dir_all(filepath.parent().unwrap())?;
-    let file = fs::File::create(filepath)?;
-    let mut encoder = ZlibEncoder::new(file, Compression::best());
-    encoder.write_all(&blob)?;
-    encoder.finish()?;
-    Ok(hash)
+    let mut header = vec![];
+    header.write(b"blob ")?;
+    header.write(content_size.to_string().as_bytes())?;
+    let mut content = Vec::with_capacity(content_size);
+    content.resize(content_size, 0);
+    fs::File::open(filepath)?.read_exact(&mut content)?;
+    Object{ header, content }.serialize()
 }
 
 fn object_path(hash: &str) -> Result<PathBuf> {
