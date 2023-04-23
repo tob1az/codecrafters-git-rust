@@ -53,7 +53,7 @@ impl Command {
             Self::CatFile(ref command) => git::Object::from_hash(&command.hash)?.print(),
             Self::HashObject(ref command) => {
                 let hash = git::blobify(&command.path)?;
-                println!("{}", hash);
+                println!("{}", hex::encode(&hash));
                 Ok(())
             }
             Self::LsTree(ref command) => git::Object::from_hash(&command.hash)?
