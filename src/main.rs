@@ -18,6 +18,7 @@ enum Command {
     CatFile(CatFile),
     HashObject(HashObject),
     LsTree(LsTree),
+    WriteTree,
 }
 
 #[derive(Args, Debug)]
@@ -59,6 +60,11 @@ impl Command {
             Self::LsTree(ref command) => git::Object::from_hash(&command.hash)?
                 .parse()?
                 .print_tree_names(),
+            Self::WriteTree => {
+                let hash = git::write_tree(&PathBuf::from("."))?;
+                println!("{}", hex::encode(&hash));
+                Ok(())
+            }
         }
     }
 }
