@@ -162,16 +162,22 @@ pub fn write_tree(directory: &Path) -> Result<Hash> {
 
 fn build_tree_content(directory: &Path) -> Result<Vec<u8>> {
     assert!(directory.is_dir());
-    let content = directory
+    let mut entries = directory
         .read_dir()?
         .into_iter()
         .flatten()
+        .filter(|e| !(e.path().is_dir() && e.path().ends_with(".git")))
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|e| e.file_name());
+    let content = entries
+        .into_iter()
         .map(|entry| {
             let meta = entry.metadata()?;
-            let hash = if meta.is_dir() {
-                write_tree(&entry.path())?
+            let (mode, hash) = if meta.is_dir() {
+                const DIRECTORY: u32 = 0o40000;
+                (DIRECTORY, write_tree(&entry.path())?)
             } else if meta.is_file() {
-                blobify(&entry.path())?
+                (meta.permissions().mode(), blobify(&entry.path())?)
             } else {
                 return Err(Error::from(ErrorKind::Unsupported));
             };
@@ -179,12 +185,11 @@ fn build_tree_content(directory: &Path) -> Result<Vec<u8>> {
             write!(
                 &mut buffer,
                 "{:o} {}",
-                meta.permissions().mode(),
+                mode,
                 entry.file_name().to_string_lossy()
             )?;
             buffer.push(0);
             buffer.extend(hash);
-
             Ok(buffer)
         })
         .collect::<Result<Vec<_>>>()?
