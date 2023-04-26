@@ -8,6 +8,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+const HASH_SIZE: usize = 40; // hex string of SHA1
+
 pub enum ParsedObject {
     Blob(Vec<u8>),
     Commit,
@@ -140,7 +142,6 @@ pub fn blobify(filepath: &Path) -> Result<Hash> {
 }
 
 fn object_path(hash: &str) -> Result<PathBuf> {
-    const HASH_SIZE: usize = 40; // hex string of SHA1
     if hash.len() != HASH_SIZE {
         return Err(Error::from(ErrorKind::InvalidInput));
     }
@@ -207,18 +208,24 @@ pub fn commit(tree: &Hash, parent: &Hash, message: &str) -> Result<Hash> {
     let timestamp = format!("{timestamp} +0000");
     let parent_hash = hex::encode(&parent);
     let tree_hash = hex::encode(&tree);
-    let content = format!(r"tree {tree_hash}
-    parent {parent_hash}
-    author Anonymous {timestamp}
-    committer Anonymous {timestamp}
+    let content = format!(
+        "tree {tree_hash}
+parent {parent_hash}
+author Anonymous {timestamp}
+committer Anonymous {timestamp}
 
-    {message}
-    ");
+{message}
+"
+    );
     // TODO: extract Object::new
     let mut header = vec![];
     header.write(b"commit ")?;
     header.write(content.len().to_string().as_bytes())?;
-    let hash = Object{ header, content: content.as_bytes().to_vec()}.serialize()?;
+    let hash = Object {
+        header,
+        content: content.as_bytes().to_vec(),
+    }
+    .serialize()?;
 
     let mut filepath = PathBuf::new();
     filepath.push(".git");
@@ -227,4 +234,11 @@ pub fn commit(tree: &Hash, parent: &Hash, message: &str) -> Result<Hash> {
     filepath.push("master");
     fs::write(filepath, format!("{}\n", hex::encode(&hash)))?;
     Ok(hash)
+}
+
+pub fn parse_hash(hash: &str) -> Result<Hash> {
+    if hash.len() != HASH_SIZE {
+        return Err(Error::from(ErrorKind::InvalidInput));
+    }
+    hex::decode(hash).map_err(|_| Error::from(ErrorKind::InvalidInput))
 }

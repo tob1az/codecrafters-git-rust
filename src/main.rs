@@ -19,6 +19,7 @@ enum Command {
     HashObject(HashObject),
     LsTree(LsTree),
     WriteTree,
+    CommitTree(CommitTree),
 }
 
 #[derive(Args, Debug)]
@@ -42,6 +43,15 @@ struct LsTree {
     hash: String,
 }
 
+#[derive(Args, Debug)]
+struct CommitTree {
+    #[arg(short)]
+    parent_hash: String,
+    #[arg(short)]
+    message: String,
+    tree_hash: String,
+}
+
 impl Command {
     fn run(&self) -> Result<()> {
         match self {
@@ -62,6 +72,15 @@ impl Command {
                 .print_tree_names(),
             Self::WriteTree => {
                 let hash = git::write_tree(&PathBuf::from("."))?;
+                println!("{}", hex::encode(&hash));
+                Ok(())
+            }
+            Self::CommitTree(ref command) => {
+                let hash = git::commit(
+                    &git::parse_hash(&command.tree_hash)?,
+                    &git::parse_hash(&command.parent_hash)?,
+                    &command.message,
+                )?;
                 println!("{}", hex::encode(&hash));
                 Ok(())
             }
