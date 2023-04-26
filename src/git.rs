@@ -6,6 +6,7 @@ use std::fs;
 use std::io::{prelude::*, stdout, BufReader, Error, ErrorKind, Result};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 pub enum ParsedObject {
     Blob(Vec<u8>),
@@ -196,4 +197,34 @@ fn build_tree_content(directory: &Path) -> Result<Vec<u8>> {
         .concat();
 
     Ok(content)
+}
+
+pub fn commit(tree: &Hash, parent: &Hash, message: &str) -> Result<Hash> {
+    let timestamp = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_err(|_| Error::from(ErrorKind::Other))?
+        .as_secs();
+    let timestamp = format!("{timestamp} +0000");
+    let parent_hash = hex::encode(&parent);
+    let tree_hash = hex::encode(&tree);
+    let content = format!(r"tree {tree_hash}
+    parent {parent_hash}
+    author Anonymous {timestamp}
+    committer Anonymous {timestamp}
+
+    {message}
+    ");
+    // TODO: extract Object::new
+    let mut header = vec![];
+    header.write(b"commit ")?;
+    header.write(content.len().to_string().as_bytes())?;
+    let hash = Object{ header, content: content.as_bytes().to_vec()}.serialize()?;
+
+    let mut filepath = PathBuf::new();
+    filepath.push(".git");
+    filepath.push("refs");
+    filepath.push("heads");
+    filepath.push("master");
+    fs::write(filepath, format!("{}\n", hex::encode(&hash)))?;
+    Ok(hash)
 }
