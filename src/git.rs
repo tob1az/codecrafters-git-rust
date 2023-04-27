@@ -43,6 +43,18 @@ pub struct Object {
 }
 
 impl Object {
+    fn new(kind: &[u8], content: &[u8]) -> Self {
+        let mut header = vec![];
+        header.write(kind).unwrap();
+        header.write(b" ").unwrap();
+        header.write(content.len().to_string().as_bytes()).unwrap();
+
+        Object {
+            header,
+            content: content.to_vec(),
+        }
+    }
+
     pub fn from_hash(hash: &str) -> Result<Self> {
         let filepath = object_path(hash)?;
         let file = BufReader::new(fs::File::open(filepath)?);
@@ -131,14 +143,11 @@ fn read_field<R: BufRead>(reader: &mut R, separator: u8) -> Result<String> {
 pub type Hash = Vec<u8>;
 
 pub fn blobify(filepath: &Path) -> Result<Hash> {
-    let content_size = filepath.metadata()?.len() as usize;
-    let mut header = vec![];
-    header.write(b"blob ")?;
-    header.write(content_size.to_string().as_bytes())?;
+    let content_size: usize = filepath.metadata()?.len() as usize;
     let mut content = Vec::with_capacity(content_size);
     content.resize(content_size, 0);
     fs::File::open(filepath)?.read_exact(&mut content)?;
-    Object { header, content }.serialize()
+    Object::new(b"blob", &content).serialize()
 }
 
 fn object_path(hash: &str) -> Result<PathBuf> {
@@ -156,10 +165,7 @@ fn object_path(hash: &str) -> Result<PathBuf> {
 
 pub fn write_tree(directory: &Path) -> Result<Hash> {
     let content = build_tree_content(directory)?;
-    let mut header = vec![];
-    header.write(b"tree ")?;
-    header.write(content.len().to_string().as_bytes())?;
-    Object { header, content }.serialize()
+    Object::new(b"tree", &content).serialize()
 }
 
 fn build_tree_content(directory: &Path) -> Result<Vec<u8>> {
@@ -217,15 +223,7 @@ committer Anonymous {timestamp}
 {message}
 "
     );
-    // TODO: extract Object::new
-    let mut header = vec![];
-    header.write(b"commit ")?;
-    header.write(content.len().to_string().as_bytes())?;
-    let hash = Object {
-        header,
-        content: content.as_bytes().to_vec(),
-    }
-    .serialize()?;
+    let hash = Object::new(b"commit", content.as_bytes()).serialize()?;
 
     let mut filepath = PathBuf::new();
     filepath.push(".git");
