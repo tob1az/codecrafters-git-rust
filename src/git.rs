@@ -3,10 +3,11 @@
 use flate2::{bufread::ZlibDecoder, write::ZlibEncoder, Compression};
 use sha1::{Digest, Sha1};
 use std::fs;
-use std::io::{prelude::*, stdout, BufReader, Error, ErrorKind, Result};
+use std::io::{prelude::*, stdout, BufReader};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+use anyhow::{anyhow, Context, Result, bail};
 
 const HASH_SIZE: usize = 40; // hex string of SHA1
 
@@ -26,7 +27,7 @@ impl ParsedObject {
                 }
                 Ok(())
             }
-            _ => Err(Error::from(ErrorKind::Unsupported)),
+            _ => Err(anyhow!("Unsupported object")),
         }
     }
 }
@@ -64,7 +65,7 @@ impl Object {
         let header_end_index = data
             .iter()
             .position(|&b| b == 0)
-            .ok_or_else(|| Error::from(ErrorKind::InvalidData))?;
+            .ok_or_else(|| anyhow!("Header not found"))?;
         let content = data.split_off(header_end_index + 1);
         let mut header = data;
         let _ = header.pop(); // remove the separator byte
@@ -74,7 +75,7 @@ impl Object {
     }
 
     pub fn print(&self) -> Result<()> {
-        stdout().write_all(&self.content)
+        stdout().write_all(&self.content).with_context(|| "Failed to print object")
     }
 
     pub fn parse(&self) -> Result<ParsedObject> {
@@ -82,13 +83,13 @@ impl Object {
             .header
             .split(|&b| b == b' ')
             .next()
-            .ok_or_else(|| Error::from(ErrorKind::InvalidData))?;
+            .ok_or_else(|| anyhow!("Invalid object header"))?;
         match kind {
             b"blob" => Ok(ParsedObject::Blob(self.content.clone())),
             b"commit" => Ok(ParsedObject::Commit),
             b"tag" => Ok(ParsedObject::Tag),
             b"tree" => Ok(parse_tree(&self.content)?),
-            _ => Err(Error::from(ErrorKind::InvalidData)),
+            _ => Err(anyhow!("Unsupported object type")),
         }
     }
     fn serialize(&self) -> Result<Hash> {
@@ -122,9 +123,9 @@ fn parse_tree(data: &[u8]) -> Result<ParsedObject> {
     while !reader.fill_buf()?.is_empty() {
         let mode = read_field(&mut reader, b' ')?
             .parse::<u32>()
-            .map_err(|_| Error::from(ErrorKind::InvalidData))?;
+            .with_context(|| "Failed to read file mode")?;
         let name = read_field(&mut reader, 0)?;
-        let mut hash = vec![0; 20];
+        let mut hash = vec![0; HASH_SIZE];
         reader.read_exact(&mut hash)?;
         entries.push(TreeEntry { mode, name, hash });
     }
@@ -136,8 +137,7 @@ fn read_field<R: BufRead>(reader: &mut R, separator: u8) -> Result<String> {
     reader.read_until(separator, &mut field)?;
     let _ = field.pop(); // remove separator
 
-    // TODO: move to anyhow
-    Ok(String::from_utf8(field).map_err(|_| Error::from(ErrorKind::InvalidData))?)
+    Ok(String::from_utf8(field).with_context(|| "Failed to read field")?)
 }
 
 pub type Hash = Vec<u8>;
@@ -152,7 +152,7 @@ pub fn blobify(filepath: &Path) -> Result<Hash> {
 
 fn object_path(hash: &str) -> Result<PathBuf> {
     if hash.len() != HASH_SIZE {
-        return Err(Error::from(ErrorKind::InvalidInput));
+        bail!("Invalid hash length {}", hash.len());
     }
     let (subdir, filename) = hash.split_at(2);
     let mut filepath = PathBuf::new();
@@ -187,7 +187,7 @@ fn build_tree_content(directory: &Path) -> Result<Vec<u8>> {
             } else if meta.is_file() {
                 (meta.permissions().mode(), blobify(&entry.path())?)
             } else {
-                return Err(Error::from(ErrorKind::Unsupported));
+                bail!("Unsupported file type: {}", entry.path().display());
             };
             let mut buffer = vec![];
             write!(
@@ -209,7 +209,7 @@ fn build_tree_content(directory: &Path) -> Result<Vec<u8>> {
 pub fn commit(tree: &Hash, parent: &Hash, message: &str) -> Result<Hash> {
     let timestamp = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
-        .map_err(|_| Error::from(ErrorKind::Other))?
+        .map_err(|_| anyhow!("Failed to read system time"))?
         .as_secs();
     let timestamp = format!("{timestamp} +0000");
     let parent_hash = hex::encode(&parent);
@@ -236,7 +236,7 @@ committer Anonymous {timestamp}
 
 pub fn parse_hash(hash: &str) -> Result<Hash> {
     if hash.len() != HASH_SIZE {
-        return Err(Error::from(ErrorKind::InvalidInput));
+        bail!("Invalid hash size {}", hash.len());
     }
-    hex::decode(hash).map_err(|_| Error::from(ErrorKind::InvalidInput))
+    hex::decode(hash).with_context(|| "Invalid hash")
 }

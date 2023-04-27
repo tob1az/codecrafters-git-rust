@@ -2,7 +2,7 @@ mod git;
 
 use clap::{Args, Parser, Subcommand};
 use std::fs;
-use std::io::Result;
+use anyhow::Result;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -59,7 +59,8 @@ impl Command {
                 fs::create_dir(".git")?;
                 fs::create_dir(".git/objects")?;
                 fs::create_dir(".git/refs")?;
-                fs::write(".git/HEAD", "ref: refs/heads/master\n")
+                fs::write(".git/HEAD", "ref: refs/heads/master\n")?;
+                Ok(())
             }
             Self::CatFile(ref command) => git::Object::from_hash(&command.hash)?.print(),
             Self::HashObject(ref command) => {
