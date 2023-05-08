@@ -95,7 +95,12 @@ impl Command {
                 Ok(())
             }
             Self::Clone(ref command) => {
-                let remote_url = Url::from_str(&command.url)?;
+                let remote_url = if command.url.ends_with('/') {
+                    Url::from_str(&command.url)?
+                } else {
+                    let url = command.url.clone() + "/";
+                    Url::from_str(&url)?
+                };
                 let refs = git::remote::discover_references(&remote_url)?;
                 let pack = git::remote::fetch_refs(&remote_url, &refs)?;
                 let objects = git::pack::parse(pack)?;

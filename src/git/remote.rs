@@ -9,6 +9,7 @@ const LENGTH_SIZE: usize = 4;
 
 pub fn discover_references(git_url: &Url) -> Result<Vec<Reference>> {
     let url = git_url.join("info/refs?service=git-upload-pack")?;
+    println!("Discover refs: {url}");
     let response = reqwest::blocking::get(url)?;
 
     if response.status() != StatusCode::OK && response.status() != StatusCode::NOT_MODIFIED {
@@ -38,21 +39,26 @@ pub fn discover_references(git_url: &Url) -> Result<Vec<Reference>> {
             .next()
             .ok_or_else(|| anyhow!("Discovery response with no terminator line"))?,
     )?;
-    if last_line != "0000" {
+    if last_line != "" {
         bail!("Unexpected last line {last_line}");
     }
-    let mut refs_with_capabilities = pkt_lines
+    let mut refs = pkt_lines
         .rev()
-        .filter(|p| p.is_empty())
-        .map(|p| {
-            // remove null-delimited capabilities if any
-            Ok(parse_pkt_line(p)?
+        .enumerate()
+        .map(|(i, p)| {
+            let line = if i == 0 {
+                p.get(4..)
+                    .ok_or_else(|| anyhow!("First ref line in wrong format"))?
+            } else {
+                p
+            };
+            Ok(line
                 .split_once(' ')
                 .map(|(hash, reference)| (hash.to_owned(), reference.to_owned()))
                 .ok_or_else(|| anyhow!("Ref line in wrong format"))?)
         })
         .collect::<Result<Vec<_>>>()?;
-    let first_pkt_line = refs_with_capabilities
+    let first_pkt_line = refs
         .get_mut(0)
         .ok_or_else(|| anyhow!("Discovery response without capabilities line"))?;
     let capabilities_start = first_pkt_line
@@ -65,7 +71,7 @@ pub fn discover_references(git_url: &Url) -> Result<Vec<Reference>> {
     {
         bail!("Missing git server capabilities");
     }
-    Ok(refs_with_capabilities)
+    Ok(refs)
 }
 
 fn parse_pkt_line(data: &str) -> Result<String> {
@@ -74,8 +80,13 @@ fn parse_pkt_line(data: &str) -> Result<String> {
             .ok_or_else(|| anyhow!("Bad PKT length: {data}"))?,
         16,
     )?;
-    if data.len() != expected_length {
-        bail!("Wrong encoded PKT length {expected_length}");
+    // add 1 to account for the deleted newline character
+    // handle special case for empty lines
+    if (data.len() + 1 != expected_length) && (expected_length == 0 && data.len() != LENGTH_SIZE) {
+        bail!(
+            "Wrong encoded PKT length: expected {expected_length}, got {}",
+            data.len()
+        );
     }
     Ok(data[4..].to_owned())
 }
