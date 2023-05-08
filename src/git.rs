@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+pub mod pack;
+pub mod remote;
+
 use flate2::{bufread::ZlibDecoder, write::ZlibEncoder, Compression};
 use sha1::{Digest, Sha1};
 use std::fs;

@@ -1,9 +1,11 @@
 mod git;
 
-use clap::{Args, Parser, Subcommand};
-use std::fs;
 use anyhow::Result;
+use clap::{Args, Parser, Subcommand};
+use reqwest::Url;
+use std::fs;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -20,6 +22,7 @@ enum Command {
     LsTree(LsTree),
     WriteTree,
     CommitTree(CommitTree),
+    Clone(CloneRepo),
 }
 
 #[derive(Args, Debug)]
@@ -50,6 +53,12 @@ struct CommitTree {
     #[arg(short)]
     message: String,
     tree_hash: String,
+}
+
+#[derive(Args, Debug)]
+struct CloneRepo {
+    url: String,
+    path: PathBuf,
 }
 
 impl Command {
@@ -84,6 +93,17 @@ impl Command {
                 )?;
                 println!("{}", hex::encode(&hash));
                 Ok(())
+            }
+            Self::Clone(ref command) => {
+                let remote_url = Url::from_str(&command.url)?;
+                let refs = git::remote::discover_references(&remote_url)?;
+                let pack = git::remote::fetch_refs(&remote_url, &refs)?;
+                let objects = git::pack::parse(pack)?;
+                // init
+                // store objects
+                // write refs
+                // checkout HEAD
+                todo!()
             }
         }
     }
