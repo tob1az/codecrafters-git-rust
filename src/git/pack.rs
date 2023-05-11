@@ -1,4 +1,4 @@
-use super::{Object, HASH_SIZE};
+use super::{Object, HASH_HEX_SIZE};
 use anyhow::{anyhow, bail, Ok, Result};
 use bytes::{Buf, Bytes};
 use flate2::read::ZlibDecoder;
@@ -8,6 +8,7 @@ use std::{collections::HashMap, io::Read};
 const SIGNATURE_SIZE: usize = 4;
 const SIGNATURE: &[u8; SIGNATURE_SIZE] = b"PACK";
 const VERSION: u32 = 2;
+const HASH_SIZE: usize = HASH_HEX_SIZE / 2;
 const PACK_FRAME_SIZE: usize = SIGNATURE_SIZE + std::mem::size_of::<u32>() * 2 + HASH_SIZE;
 
 #[repr(u8)]
@@ -52,58 +53,89 @@ impl TryFrom<usize> for ObjectTypeId {
 pub fn parse(pack_buffer: Vec<u8>) -> Result<Vec<Object>> {
     let mut parser = Bytes::from(pack_buffer);
     verify_pack(&mut parser)?;
-    let object_number = parser.get_u32_ne();
-
+    let object_number = parser.get_u32();
+    println!("Object number: {object_number}");
     let mut objects = Vec::with_capacity(object_number as usize);
+    let mut ref_to_index = HashMap::new();
     for _ in 0..object_number {
         let (id, size) = parse_object_header(&mut parser)?;
+        println!("{} {size}", id.to_string());
         use ObjectTypeId::*;
-        let mut ref_to_index = HashMap::new();
         match id {
             Commit | Tree | Blob | Tag => {
                 let content = unpack_content(size, &mut parser)?;
 
                 let object = Object::new(id.to_string().as_bytes(), &content);
                 ref_to_index.insert(object.hash(), objects.len());
+                println!("hash {}", hex::encode(object.hash()));
                 objects.push(object);
             }
             ReferenceDelta => {
                 let reference = parser.copy_to_bytes(HASH_SIZE).to_vec();
                 if let Some(index) = ref_to_index.get(&reference) {
-                    let object = &mut objects[*index];
-                    let delta_instructions = unpack_content(size, &mut parser)?;
-                    let _source_size = parse_multibyte_number(&mut parser)?;
-                    let target_size = parse_multibyte_number(&mut parser)?;
-                    apply_delta_to_object(Bytes::from(delta_instructions), target_size, object)?;
+                    let source_object = &objects[*index];
+                    let mut delta_instructions = Bytes::from(unpack_content(size, &mut parser)?);
+                    let _source_size = parse_multibyte_number(&mut delta_instructions)?;
+                    let target_size = parse_multibyte_number(&mut delta_instructions)?;
+                    let patched_content =
+                        patch_content(delta_instructions, target_size, &source_object.content)?;
+                    // TODO: get object kind correctly
+                    let object = Object::new(
+                        source_object.header.split(|c| *c == b' ').next().unwrap(),
+                        &patched_content,
+                    );
+                    ref_to_index.insert(object.hash(), objects.len());
+                    println!("new hash {}", hex::encode(object.hash()));
+                    objects.push(object);
                 } else {
                     bail!("Unknown object reference {}", hex::encode(reference));
                 }
             }
-            _ => unimplemented!(),
+            OffsetDelta => {
+                let offset = parse_multibyte_number(&mut parser)?;
+                if offset > objects.len() {
+                    bail!(
+                        "Wrong object offset {offset}, current idx {}",
+                        objects.len()
+                    );
+                }
+                let index = objects.len() - offset;
+                /*let object = &mut objects[index];
+                let mut delta_instructions = Bytes::from(unpack_content(size, &mut parser)?);
+                let _source_size = parse_multibyte_number(&mut delta_instructions)?;
+                let target_size = parse_multibyte_number(&mut delta_instructions)?;
+                apply_delta_to_object(delta_instructions, target_size, object)?;*/
+            }
         }
     }
 
-    todo!();
+    Ok(objects)
 }
 
 fn verify_pack(parser: &mut Bytes) -> Result<()> {
     if parser.len() <= PACK_FRAME_SIZE {
         bail!("Pack too short: {}", parser.len());
     }
-    let expected_hash = parser.split_off(HASH_SIZE);
+    println!("pack length {}", parser.len());
+    let expected_hash = parser.split_off(parser.len() - HASH_SIZE);
+
     let real_hash = Sha1::new()
         .chain_update(&parser[..])
         .finalize()
         .into_iter()
         .collect::<Vec<_>>();
     if real_hash != expected_hash {
-        bail!("Corrupted pack");
+        bail!(
+            "Corrupted pack: expected {}, got {}",
+            hex::encode(expected_hash),
+            hex::encode(real_hash)
+        );
     }
     let signature = parser.copy_to_bytes(SIGNATURE_SIZE);
     if &signature[..] != SIGNATURE {
         bail!("Wrong signature {signature:?}");
     }
-    let version = parser.get_u32_ne();
+    let version = parser.get_u32();
     if version != VERSION {
         bail!("Wrong version {version}");
     }
@@ -112,14 +144,13 @@ fn verify_pack(parser: &mut Bytes) -> Result<()> {
 
 fn parse_object_header(parser: &mut Bytes) -> Result<(ObjectTypeId, usize)> {
     if !parser.has_remaining() {
-        bail!("object header too short");
+        bail!("Object header is too short");
     }
     let first_byte = parser.get_u8();
     const ID_MASK: u8 = 0b0111_0000;
     const ID_BIT_WIDTH: u32 = 4;
     let id = ObjectTypeId::try_from(((first_byte & ID_MASK) as usize) >> ID_BIT_WIDTH)
         .map_err(|_| anyhow!("Unknown Object ID"))?;
-    const INITIAL_SIZE_MASK: u8 = 0xf;
     // clear ID bits
     let first_byte = first_byte & !ID_MASK;
     Ok((
@@ -138,7 +169,7 @@ fn parse_multibyte_number_tail(
     let mut bit_shift = bit_width;
     let mut byte = first_byte;
     let mut number = (first_byte & SIZE_MASK) as usize;
-    while parser.has_remaining() && byte & MORE_BYTES != 0 {
+    while parser.has_remaining() && (byte & MORE_BYTES != 0) {
         byte = parser.get_u8();
         let bits = (byte & SIZE_MASK) as usize;
         number |= bits
@@ -159,12 +190,15 @@ fn parse_multibyte_number(parser: &mut Bytes) -> Result<usize> {
 }
 
 fn unpack_content(size: usize, parser: &mut Bytes) -> Result<Vec<u8>> {
-    let mut content = vec![];
-    ZlibDecoder::new(&*parser.copy_to_bytes(size)).read_to_end(&mut content)?;
+    let packed = parser.clone();
+    let mut content = Vec::with_capacity(size);
+    let mut decoder = ZlibDecoder::new(packed.as_ref());
+    decoder.read_to_end(&mut content)?;
+    parser.advance(decoder.total_in() as usize);
     Ok(content)
 }
 
-fn apply_delta_to_object(mut delta: Bytes, target_size: usize, object: &mut Object) -> Result<()> {
+fn patch_content(mut delta: Bytes, target_size: usize, object: &[u8]) -> Result<Vec<u8>> {
     let mut new_content = Vec::with_capacity(target_size);
     while delta.has_remaining() {
         let header = delta.get_u8();
@@ -173,14 +207,15 @@ fn apply_delta_to_object(mut delta: Bytes, target_size: usize, object: &mut Obje
             let offset = build_number(header, 4, &mut delta)?;
             let header = header >> 4;
             let size = build_number(header, 3, &mut delta)?;
+            println!("Copy from {offset} size {size}");
             new_content.extend_from_slice(
                 object
-                    .content
                     .get(offset..offset + size)
                     .ok_or_else(|| anyhow!("Wrong delta copy"))?,
             );
         } else {
             let size = header as usize;
+            println!("Insert {size} bytes");
             let remaining = delta.remaining();
             if remaining < size {
                 bail!("Wrong delta");
@@ -195,22 +230,22 @@ fn apply_delta_to_object(mut delta: Bytes, target_size: usize, object: &mut Obje
             new_content.len()
         );
     }
-    object.content = new_content;
-    Ok(())
+    Ok(new_content)
 }
 
-fn build_number(mask: u8, byte_width: u32, data: &mut Bytes) -> Result<usize> {
+fn build_number(mask: u8, bit_width: u32, data: &mut Bytes) -> Result<usize> {
     // cannot share &mut Bytes with the try_fold closure, need a clone
     let mut number_reader = data.clone();
-    let result = (0..byte_width)
-        .filter(|b| mask & (1 << b) != 0)
-        .try_fold(0, |number, bit_number| {
-            let shift = 8 * bit_number;
-            if !number_reader.has_remaining() {
-                bail!("Unfinished delta");
-            }
-            Ok(number | (number_reader.get_u8() as usize) << shift)
-        });
+    let result =
+        (0..bit_width)
+            .filter(|b| mask & (1 << b) != 0)
+            .try_fold(0, |number, byte_index| {
+                let shift = 8 * byte_index;
+                if !number_reader.has_remaining() {
+                    bail!("Unfinished delta");
+                }
+                Ok(number | (number_reader.get_u8() as usize) << shift)
+            });
     let bytes_read = data.remaining() - number_reader.remaining();
     data.advance(bytes_read);
     result

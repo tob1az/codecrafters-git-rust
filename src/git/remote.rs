@@ -1,3 +1,5 @@
+use std::io::Read;
+
 use anyhow::{anyhow, bail, Result};
 use reqwest::{blocking::Client, header, StatusCode, Url};
 
@@ -52,7 +54,7 @@ pub fn discover_references(git_url: &Url) -> Result<Vec<Reference>> {
             } else {
                 p
             };
-            Ok(line
+            Ok(parse_pkt_line(line)?
                 .split_once(' ')
                 .map(|(hash, reference)| (hash.to_owned(), reference.to_owned()))
                 .ok_or_else(|| anyhow!("Ref line in wrong format"))?)
@@ -91,7 +93,7 @@ fn parse_pkt_line(data: &str) -> Result<String> {
     Ok(data[4..].to_owned())
 }
 
-pub fn fetch_refs(git_url: &Url, refs: &[Reference]) -> Result<Vec<u8>> {
+pub fn fetch_pack(git_url: &Url, refs: &[Reference]) -> Result<Vec<u8>> {
     let request = refs
         .iter()
         .enumerate()
@@ -104,10 +106,11 @@ pub fn fetch_refs(git_url: &Url, refs: &[Reference]) -> Result<Vec<u8>> {
             format!("{:04x}{}", want.len() + LENGTH_SIZE, want)
         })
         .chain(std::iter::once("0000".to_owned()))
+        .chain(std::iter::once("0009done\n".to_owned()))
         // join
         .fold(String::new(), |result, line| result + line.as_str());
     let url = git_url.join("git-upload-pack")?;
-    let response = Client::new()
+    let mut response = Client::new()
         .post(url)
         .header(
             header::CONTENT_TYPE,
@@ -115,7 +118,11 @@ pub fn fetch_refs(git_url: &Url, refs: &[Reference]) -> Result<Vec<u8>> {
         )
         .body(request.to_owned())
         .send()?;
-
+    let mut body: Vec<u8> = Vec::new();
+    response.read_to_end(&mut body)?;
     const PACK_OFFSET: usize = 8;
-    Ok(response.text()?.as_bytes()[8..].iter().copied().collect())
+    Ok(body
+        .get(8..)
+        .ok_or_else(|| anyhow!("Unexpected fetch response"))?
+        .to_vec())
 }

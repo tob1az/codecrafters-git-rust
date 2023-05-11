@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use anyhow::{anyhow, Context, Result, bail};
 
-const HASH_SIZE: usize = 40; // hex string of SHA1
+const HASH_HEX_SIZE: usize = 40; // hex string of SHA1
 
 pub enum ParsedObject {
     Blob(Vec<u8>),
@@ -128,7 +128,7 @@ fn parse_tree(data: &[u8]) -> Result<ParsedObject> {
             .parse::<u32>()
             .with_context(|| "Failed to read file mode")?;
         let name = read_field(&mut reader, 0)?;
-        let mut hash = vec![0; HASH_SIZE];
+        let mut hash = vec![0; HASH_HEX_SIZE];
         reader.read_exact(&mut hash)?;
         entries.push(TreeEntry { mode, name, hash });
     }
@@ -154,7 +154,7 @@ pub fn blobify(filepath: &Path) -> Result<Hash> {
 }
 
 fn object_path(hash: &str) -> Result<PathBuf> {
-    if hash.len() != HASH_SIZE {
+    if hash.len() != HASH_HEX_SIZE {
         bail!("Invalid hash length {}", hash.len());
     }
     let (subdir, filename) = hash.split_at(2);
@@ -238,7 +238,7 @@ committer Anonymous {timestamp}
 }
 
 pub fn parse_hash(hash: &str) -> Result<Hash> {
-    if hash.len() != HASH_SIZE {
+    if hash.len() != HASH_HEX_SIZE {
         bail!("Invalid hash size {}", hash.len());
     }
     hex::decode(hash).with_context(|| "Invalid hash")

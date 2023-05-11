@@ -102,7 +102,7 @@ impl Command {
                     Url::from_str(&url)?
                 };
                 let refs = git::remote::discover_references(&remote_url)?;
-                let pack = git::remote::fetch_refs(&remote_url, &refs)?;
+                let pack = git::remote::fetch_pack(&remote_url, &refs)?;
                 let objects = git::pack::parse(pack)?;
                 // init
                 // store objects
