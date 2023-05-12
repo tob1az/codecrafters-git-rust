@@ -261,3 +261,22 @@ where
     fs::write(".git/HEAD", "ref: refs/heads/master\n")?;
     Ok(())
 }
+
+pub fn store_references(refs: &[remote::Reference]) -> Result<()> {
+    let mut refs = refs.iter();
+    let (head_hash, _) = refs.next().ok_or_else(|| anyhow!("No HEAD reference"))?;
+    let dot_git = Path::new(".git");
+    for (hash, path) in refs {
+        if hash == head_hash {
+            fs::write(dot_git.join("HEAD"), format!("ref: {path}"))?;
+        }
+        let ref_filepath = dot_git.join(path);
+        let parent_dir = ref_filepath.parent().unwrap();
+        if !parent_dir.exists() {
+            fs::create_dir_all(parent_dir)?;
+        }
+        fs::write(ref_filepath, format!("{hash}\n"))?;
+    }
+
+    Ok(())
+}

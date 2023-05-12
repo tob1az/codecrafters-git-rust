@@ -103,7 +103,7 @@ impl Command {
                 for object in objects {
                     object.serialize()?;
                 }
-                // write refs
+                git::store_references(&refs)?;
                 // checkout HEAD
                 todo!()
             }
