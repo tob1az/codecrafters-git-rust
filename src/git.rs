@@ -97,7 +97,7 @@ impl Object {
             _ => Err(anyhow!("Unsupported object type")),
         }
     }
-    fn serialize(&self) -> Result<Hash> {
+    pub fn serialize(&self) -> Result<Hash> {
         // TODO: extract separator?
         let separator = [b'\0'; 1];
         let hash = self.hash();

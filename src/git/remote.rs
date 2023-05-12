@@ -3,9 +3,9 @@ use std::io::Read;
 use anyhow::{anyhow, bail, Result};
 use reqwest::{blocking::Client, header, StatusCode, Url};
 
-type Sha1 = String;
-type ReferenceName = String;
-type Reference = (Sha1, ReferenceName);
+pub type Sha1 = String;
+pub type ReferenceName = String;
+pub type Reference = (Sha1, ReferenceName);
 
 const LENGTH_SIZE: usize = 4;
 

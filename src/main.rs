@@ -3,7 +3,6 @@ mod git;
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use reqwest::Url;
-use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -101,8 +100,9 @@ impl Command {
                 let pack = git::remote::fetch_pack(&remote_url, &refs)?;
                 let objects = git::pack::parse(pack)?;
                 git::init(&command.path)?;
-                // init
-                // store objects
+                for object in objects {
+                    object.serialize()?;
+                }
                 // write refs
                 // checkout HEAD
                 todo!()
