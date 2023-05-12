@@ -65,11 +65,7 @@ impl Command {
     fn run(&self) -> Result<()> {
         match self {
             Self::Init => {
-                fs::create_dir(".git")?;
-                fs::create_dir(".git/objects")?;
-                fs::create_dir(".git/refs")?;
-                fs::write(".git/HEAD", "ref: refs/heads/master\n")?;
-                Ok(())
+                git::init(".")
             }
             Self::CatFile(ref command) => git::Object::from_hash(&command.hash)?.print(),
             Self::HashObject(ref command) => {
@@ -104,6 +100,7 @@ impl Command {
                 let refs = git::remote::discover_references(&remote_url)?;
                 let pack = git::remote::fetch_pack(&remote_url, &refs)?;
                 let objects = git::pack::parse(pack)?;
+                git::init(&command.path)?;
                 // init
                 // store objects
                 // write refs

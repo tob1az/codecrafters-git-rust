@@ -99,7 +99,8 @@ pub fn parse(pack_buffer: Vec<u8>) -> Result<Vec<Object>> {
                         objects.len()
                     );
                 }
-                let index = objects.len() - offset;
+                let _index = objects.len() - offset;
+                todo!();
                 /*let object = &mut objects[index];
                 let mut delta_instructions = Bytes::from(unpack_content(size, &mut parser)?);
                 let _source_size = parse_multibyte_number(&mut delta_instructions)?;

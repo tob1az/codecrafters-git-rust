@@ -3,14 +3,14 @@
 pub mod pack;
 pub mod remote;
 
+use anyhow::{anyhow, bail, Context, Result};
 use flate2::{bufread::ZlibDecoder, write::ZlibEncoder, Compression};
 use sha1::{Digest, Sha1};
-use std::fs;
 use std::io::{prelude::*, stdout, BufReader};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use anyhow::{anyhow, Context, Result, bail};
+use std::{env, fs};
 
 const HASH_HEX_SIZE: usize = 40; // hex string of SHA1
 
@@ -78,7 +78,9 @@ impl Object {
     }
 
     pub fn print(&self) -> Result<()> {
-        stdout().write_all(&self.content).with_context(|| "Failed to print object")
+        stdout()
+            .write_all(&self.content)
+            .with_context(|| "Failed to print object")
     }
 
     pub fn parse(&self) -> Result<ParsedObject> {
@@ -242,4 +244,20 @@ pub fn parse_hash(hash: &str) -> Result<Hash> {
         bail!("Invalid hash size {}", hash.len());
     }
     hex::decode(hash).with_context(|| "Invalid hash")
+}
+
+pub fn init<T>(path: T) -> Result<()>
+where
+    T: AsRef<Path>,
+{
+    let path = path.as_ref().canonicalize()?;
+    if !path.exists() {
+        fs::create_dir_all(&path)?;
+    }
+    env::set_current_dir(&path)?;
+    fs::create_dir(".git")?;
+    fs::create_dir(".git/objects")?;
+    fs::create_dir(".git/refs")?;
+    fs::write(".git/HEAD", "ref: refs/heads/master\n")?;
+    Ok(())
 }
