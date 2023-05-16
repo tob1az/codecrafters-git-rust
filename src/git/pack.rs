@@ -109,7 +109,7 @@ pub fn parse(pack_buffer: Vec<u8>) -> Result<Vec<Object>> {
             }
         }
     }
-
+    println!("Parsed {} objects", objects.len());
     Ok(objects)
 }
 

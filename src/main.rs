@@ -103,9 +103,8 @@ impl Command {
                 for object in objects {
                     object.serialize()?;
                 }
-                git::store_references(&refs)?;
-                // checkout HEAD
-                todo!()
+                let head_hash = git::store_references(&refs)?;
+                git::checkout(&head_hash)
             }
         }
     }

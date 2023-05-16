@@ -7,16 +7,18 @@ use anyhow::{anyhow, bail, Context, Result};
 use flate2::{bufread::ZlibDecoder, write::ZlibEncoder, Compression};
 use sha1::{Digest, Sha1};
 use std::io::{prelude::*, stdout, BufReader};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use std::{env, fs};
 
+const HASH_SIZE: usize = 20; // hex string of SHA1
 const HASH_HEX_SIZE: usize = 40; // hex string of SHA1
+const DIRECTORY_MODE: u32 = 0o40000;
 
 pub enum ParsedObject {
     Blob(Vec<u8>),
-    Commit,
+    Commit(remote::Sha1),
     Tag,
     Tree(Vec<TreeEntry>),
 }
@@ -91,7 +93,7 @@ impl Object {
             .ok_or_else(|| anyhow!("Invalid object header"))?;
         match kind {
             b"blob" => Ok(ParsedObject::Blob(self.content.clone())),
-            b"commit" => Ok(ParsedObject::Commit),
+            b"commit" => Ok(ParsedObject::Commit(parse_commit(&self.content)?)),
             b"tag" => Ok(ParsedObject::Tag),
             b"tree" => Ok(parse_tree(&self.content)?),
             _ => Err(anyhow!("Unsupported object type")),
@@ -126,11 +128,10 @@ fn parse_tree(data: &[u8]) -> Result<ParsedObject> {
     let mut entries = vec![];
     let mut reader = BufReader::new(data);
     while !reader.fill_buf()?.is_empty() {
-        let mode = read_field(&mut reader, b' ')?
-            .parse::<u32>()
+        let mode = u32::from_str_radix(&read_field(&mut reader, b' ')?, 8)
             .with_context(|| "Failed to read file mode")?;
         let name = read_field(&mut reader, 0)?;
-        let mut hash = vec![0; HASH_HEX_SIZE];
+        let mut hash = vec![0; HASH_SIZE];
         reader.read_exact(&mut hash)?;
         entries.push(TreeEntry { mode, name, hash });
     }
@@ -142,7 +143,7 @@ fn read_field<R: BufRead>(reader: &mut R, separator: u8) -> Result<String> {
     reader.read_until(separator, &mut field)?;
     let _ = field.pop(); // remove separator
 
-    Ok(String::from_utf8(field).with_context(|| "Failed to read field")?)
+    Ok(String::from_utf8(field).with_context(|| anyhow!("Failed to read field"))?)
 }
 
 pub type Hash = Vec<u8>;
@@ -187,8 +188,7 @@ fn build_tree_content(directory: &Path) -> Result<Vec<u8>> {
         .map(|entry| {
             let meta = entry.metadata()?;
             let (mode, hash) = if meta.is_dir() {
-                const DIRECTORY: u32 = 0o40000;
-                (DIRECTORY, write_tree(&entry.path())?)
+                (DIRECTORY_MODE, write_tree(&entry.path())?)
             } else if meta.is_file() {
                 (meta.permissions().mode(), blobify(&entry.path())?)
             } else {
@@ -250,7 +250,7 @@ pub fn init<T>(path: T) -> Result<()>
 where
     T: AsRef<Path>,
 {
-    let path = path.as_ref().canonicalize()?;
+    let path = path.as_ref();
     if !path.exists() {
         fs::create_dir_all(&path)?;
     }
@@ -262,7 +262,8 @@ where
     Ok(())
 }
 
-pub fn store_references(refs: &[remote::Reference]) -> Result<()> {
+pub fn store_references(refs: &[remote::Reference]) -> Result<String> {
+    println!("Store references");
     let mut refs = refs.iter();
     let (head_hash, _) = refs.next().ok_or_else(|| anyhow!("No HEAD reference"))?;
     let dot_git = Path::new(".git");
@@ -277,6 +278,61 @@ pub fn store_references(refs: &[remote::Reference]) -> Result<()> {
         }
         fs::write(ref_filepath, format!("{hash}\n"))?;
     }
+    println!("Stored all references");
 
-    Ok(())
+    Ok(head_hash.clone())
+}
+
+pub fn checkout(hash: &str) -> Result<()> {
+    println!("Checkout {hash}");
+    if let ParsedObject::Commit(commit) = Object::from_hash(hash)?.parse()? {
+        checkout_tree(&commit, &std::env::current_dir()?)
+    } else {
+        bail!("{hash} is not a commit")
+    }
+}
+
+fn parse_commit(content: &[u8]) -> Result<remote::Sha1> {
+    Ok(String::from_utf8(
+        content
+            .strip_prefix(b"tree ")
+            .ok_or_else(|| anyhow!("commit does not start with the tree line"))?
+            .bytes()
+            .flatten()
+            .take_while(|b| *b != b'\n')
+            .collect(),
+    )?)
+}
+
+fn checkout_tree(tree_hash: &str, target_path: &Path) -> Result<()> {
+    if let ParsedObject::Tree(entries) = Object::from_hash(tree_hash)?.parse()? {
+        // recurse trees and create objects from blobs
+        fs::create_dir_all(target_path)?;
+        for entry in entries {
+            if entry.mode == DIRECTORY_MODE {
+                checkout_tree(&hex::encode(&entry.hash), target_path)?
+            } else {
+                checkout_file(entry)?
+            }
+        }
+        Ok(())
+    } else {
+        bail!("{tree_hash} is not a tree")
+    }
+}
+
+fn checkout_file(file_entry: TreeEntry) -> Result<()> {
+    let sha = hex::encode(&file_entry.hash);
+    if let ParsedObject::Blob(content) = Object::from_hash(&sha)?.parse()? {
+        fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(file_entry.mode)
+            .open(file_entry.name)?
+            .write_all(&content)?;
+        Ok(())
+    } else {
+        bail!("{sha} is not a blob")
+    }
 }
