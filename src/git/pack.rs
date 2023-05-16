@@ -74,18 +74,8 @@ pub fn parse(pack_buffer: Vec<u8>) -> Result<Vec<Object>> {
                 let reference = parser.copy_to_bytes(HASH_SIZE).to_vec();
                 if let Some(index) = ref_to_index.get(&reference) {
                     let source_object = &objects[*index];
-                    let mut delta_instructions = Bytes::from(unpack_content(size, &mut parser)?);
-                    let _source_size = parse_multibyte_number(&mut delta_instructions)?;
-                    let target_size = parse_multibyte_number(&mut delta_instructions)?;
-                    let patched_content =
-                        patch_content(delta_instructions, target_size, &source_object.content)?;
-                    // TODO: get object kind correctly
-                    let object = Object::new(
-                        source_object.header.split(|c| *c == b' ').next().unwrap(),
-                        &patched_content,
-                    );
+                    let object = patch_object(source_object, size, &mut parser)?;
                     ref_to_index.insert(object.hash(), objects.len());
-                    println!("new hash {}", hex::encode(object.hash()));
                     objects.push(object);
                 } else {
                     bail!("Unknown object reference {}", hex::encode(reference));
@@ -99,18 +89,28 @@ pub fn parse(pack_buffer: Vec<u8>) -> Result<Vec<Object>> {
                         objects.len()
                     );
                 }
-                let _index = objects.len() - offset;
-                todo!();
-                /*let object = &mut objects[index];
-                let mut delta_instructions = Bytes::from(unpack_content(size, &mut parser)?);
-                let _source_size = parse_multibyte_number(&mut delta_instructions)?;
-                let target_size = parse_multibyte_number(&mut delta_instructions)?;
-                apply_delta_to_object(delta_instructions, target_size, object)?;*/
+                let index = objects.len() - offset;
+                let source_object = &mut objects[index];
+                let object = patch_object(source_object, size, &mut parser)?;
+                ref_to_index.insert(object.hash(), objects.len());
+                objects.push(object);
             }
         }
     }
     println!("Parsed {} objects", objects.len());
     Ok(objects)
+}
+
+fn patch_object(object: &Object, delta_size: usize, parser: &mut Bytes) -> Result<Object> {
+    let mut delta_instructions = Bytes::from(unpack_content(delta_size, parser)?);
+    let _source_size = parse_multibyte_number(&mut delta_instructions)?;
+    let target_size = parse_multibyte_number(&mut delta_instructions)?;
+    let patched_content = patch_content(delta_instructions, target_size, &object.content)?;
+    // TODO: get object kind correctly
+    Ok(Object::new(
+        object.header.split(|c| *c == b' ').next().unwrap(),
+        &patched_content,
+    ))
 }
 
 fn verify_pack(parser: &mut Bytes) -> Result<()> {
