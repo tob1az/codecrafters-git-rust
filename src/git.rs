@@ -309,10 +309,11 @@ fn checkout_tree(tree_hash: &str, target_path: &Path) -> Result<()> {
         // recurse trees and create objects from blobs
         fs::create_dir_all(target_path)?;
         for entry in entries {
+            println!("entry {:o} {}", entry.mode, entry.name);
             if entry.mode == DIRECTORY_MODE {
-                checkout_tree(&hex::encode(&entry.hash), target_path)?
+                checkout_tree(&hex::encode(&entry.hash), &target_path.join(entry.name))?
             } else {
-                checkout_file(entry)?
+                checkout_file(entry, target_path)?
             }
         }
         Ok(())
@@ -321,15 +322,16 @@ fn checkout_tree(tree_hash: &str, target_path: &Path) -> Result<()> {
     }
 }
 
-fn checkout_file(file_entry: TreeEntry) -> Result<()> {
+fn checkout_file(file_entry: TreeEntry, parent_dir: &Path) -> Result<()> {
     let sha = hex::encode(&file_entry.hash);
+    let filepath = parent_dir.join(file_entry.name);
     if let ParsedObject::Blob(content) = Object::from_hash(&sha)?.parse()? {
         fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .mode(file_entry.mode)
-            .open(file_entry.name)?
+            .open(filepath)?
             .write_all(&content)?;
         Ok(())
     } else {
